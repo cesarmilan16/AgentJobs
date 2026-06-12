@@ -1,0 +1,91 @@
+# Configuración del agente de ofertas.
+# Todo lo que cambia frecuentemente vive aquí; credenciales en .env.
+
+storage:
+  db_path: data/jobs.db
+  log_path: data/job_agent.log
+
+# Score mínimo (0-100) que debe sacar una oferta para entrar en el mensaje
+# de Telegram. Las ofertas se siguen guardando en SQLite aunque no se envíen.
+threshold: 60
+
+# Términos de búsqueda comunes a LinkedIn / Indeed (JobSpy).
+# Cada término se ejecuta dos veces: en "Spain" con remoto y en "Sevilla, Spain"
+# sin filtro de remoto, para no perder ofertas híbridas locales.
+search_terms:
+  - "desarrollador full stack"
+  - "junior developer"
+  - "frontend React"
+  - "backend Node"
+  - "AI engineer junior"
+
+jobspy:
+  # Sitios a consultar. Quita "linkedin" si no usas proxies y prefieres
+  # menos ruido en los logs.
+  sites: ["linkedin", "indeed"]
+  hours_old: 14
+  results_wanted: 50
+  country_indeed: "spain"
+
+infojobs:
+  enabled: true
+  # Slugs de búsqueda de InfoJobs. La URL final será:
+  #   https://www.infojobs.net/ofertas-trabajo/{slug}
+  search_slugs:
+    - "desarrollador-full-stack"
+    - "desarrollador-junior"
+    - "frontend-react"
+    - "backend-node"
+    - "ai-engineer"
+
+tecnoempleo:
+  # Cada búsqueda guardada en Tecnoempleo expone su propio canal RSS.
+  # Pega aquí las URLs (las saca el icono RSS del buscador).
+  rss_urls:
+    - "https://www.tecnoempleo.com/rss-empleo-full-stack.php"
+    - "https://www.tecnoempleo.com/rss-empleo-react.php"
+    - "https://www.tecnoempleo.com/rss-empleo-node.php"
+
+# Filtros duros (case-insensitive). Se aplican antes del scoring para
+# ahorrar llamadas a OpenAI.
+hard_filters:
+  exclude_title_keywords:
+    - "senior"
+    - "sr."
+    - "lead"
+    - "principal"
+    - "architect"
+    - "tech lead"
+    - "staff"
+    - "head of"
+    - "manager"
+    - "director"
+  exclude_text_keywords:
+    - "5+ years"
+    - "6+ years"
+    - "7+ years"
+    - "5+ años"
+    - "6+ años"
+    - "7+ años"
+    - "abap"
+    - "sap"
+    - "cobol"
+    - "mainframe"
+  # Stacks completamente ajenos. Solo descartar si aparecen como tecnología
+  # principal en el título.
+  exclude_stack_in_title:
+    - ".net"
+    - "php"
+  # Países distintos a España (en location). Si is_remote es True, se ignora.
+  exclude_locations_non_spain:
+    - "portugal"
+    - "france"
+    - "germany"
+    - "uk"
+    - "united kingdom"
+    - "ireland"
+    - "italy"
+    - "netherlands"
+    - "argentina"
+    - "mexico"
+    - "colombia"

@@ -1,0 +1,12 @@
+services:
+  agent:
+    build: .
+    image: job-agent:latest
+    env_file: .env
+    environment:
+      TZ: Europe/Madrid
+    volumes:
+      - ./data:/app/data
+      # Mount config so you can tweak it without rebuilding the image:
+      - ./config.yaml:/app/config.yaml:ro
+    # This is a batch job — no restart policy.
