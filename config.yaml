@@ -7,7 +7,7 @@ storage:
 
 # Score mínimo (0-100) que debe sacar una oferta para entrar en el mensaje
 # de Telegram. Las ofertas se siguen guardando en SQLite aunque no se envíen.
-threshold: 60
+threshold: 40
 
 # Términos de búsqueda comunes a LinkedIn / Indeed (JobSpy).
 # Cada término se ejecuta dos veces: en "Spain" con remoto y en "Sevilla, Spain"
@@ -39,12 +39,13 @@ infojobs:
     - "ai-engineer"
 
 tecnoempleo:
-  # Cada búsqueda guardada en Tecnoempleo expone su propio canal RSS.
-  # Pega aquí las URLs (las saca el icono RSS del buscador).
-  rss_urls:
-    - "https://www.tecnoempleo.com/rss-empleo-full-stack.php"
-    - "https://www.tecnoempleo.com/rss-empleo-react.php"
-    - "https://www.tecnoempleo.com/rss-empleo-node.php"
+  # Tecnoempleo retiró su RSS; ahora se scrapea el buscador HTML.
+  # Cada término se consulta en https://www.tecnoempleo.com/ofertas-trabajo/?palabra=...
+  search_terms:
+    - "full stack"
+    - "react"
+    - "node"
+    - "junior"
 
 # Filtros duros (case-insensitive). Se aplican antes del scoring para
 # ahorrar llamadas a OpenAI.

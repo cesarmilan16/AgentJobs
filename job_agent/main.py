@@ -107,9 +107,9 @@ def run(cfg: AppConfig, *, notifier: TelegramNotifier | None, dry_run: bool) -> 
 
 def _build_collectors(cfg: AppConfig) -> list[Collector]:
     collectors: list[Collector] = []
-    tecno_urls = cfg.raw.get("tecnoempleo", {}).get("rss_urls", [])
-    if tecno_urls:
-        collectors.append(TecnoempleoCollector(rss_urls=tecno_urls))
+    tecno_terms = cfg.raw.get("tecnoempleo", {}).get("search_terms", [])
+    if tecno_terms:
+        collectors.append(TecnoempleoCollector(search_terms=tecno_terms))
 
     infojobs_cfg = cfg.raw.get("infojobs", {})
     if infojobs_cfg.get("enabled") and infojobs_cfg.get("search_slugs"):
