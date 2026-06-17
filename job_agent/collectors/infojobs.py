@@ -145,6 +145,12 @@ def _record_to_offer(rec: dict) -> JobOffer | None:
             break
     is_remote = bool(_REMOTE_RE.search(f"{modality} {title}"))
 
+    # InfoJobs no expone la descripción completa en el listado, pero las viñetas
+    # de la tarjeta (ubicación, modalidad, experiencia, salario...) sí dan
+    # contexto suficiente para que la IA puntúe. Las unimos como descripción
+    # mínima en vez de descartarlas.
+    description = "\n".join(it for it in items if it)
+
     return JobOffer.build(
         title=title,
         company=(rec.get("company") or "").strip(),
@@ -152,6 +158,6 @@ def _record_to_offer(rec: dict) -> JobOffer | None:
         url=url,
         location=location,
         is_remote=is_remote,
-        description="",
+        description=description,
         published_at=None,
     )

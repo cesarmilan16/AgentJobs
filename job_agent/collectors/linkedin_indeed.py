@@ -67,6 +67,10 @@ class JobSpyCollector(Collector):
                 country_indeed=self.country_indeed,
                 proxies=self.proxies,
                 description_format="markdown",
+                # LinkedIn no incluye la descripción en el listado: jobspy debe
+                # visitar cada oferta (1 petición extra por oferta). Sin proxies
+                # esto puede provocar rate-limit/bloqueo temporal de la IP.
+                linkedin_fetch_description=True,
                 verbose=0,
             )
         except Exception:
