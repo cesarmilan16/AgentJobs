@@ -1,178 +1,157 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
-import time
-from datetime import datetime
-
-import requests
-from bs4 import BeautifulSoup
+from urllib.parse import quote_plus
 
 from job_agent.collectors.base import Collector
 from job_agent.models import JobOffer, Source
 
 log = logging.getLogger(__name__)
 
-_BASE = "https://www.infojobs.net/ofertas-trabajo"
+_SEARCH = "https://www.infojobs.net/jobsearch/search-results/list.xhtml?keyword={kw}"
 _UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
-_REMOTE_RE = re.compile(r"\b(remoto|teletrabajo|100% remoto|remote)\b", re.IGNORECASE)
+_REMOTE_RE = re.compile(r"\b(remoto|teletrabajo|100% remoto|remote|h[ií]brido)\b", re.IGNORECASE)
+_MODALITY_RE = re.compile(r"(solo teletrabajo|teletrabajo|h[ií]brido|presencial|remoto)", re.IGNORECASE)
+
+# Se ejecuta dentro de la página: devuelve las ofertas del listado.
+# InfoJobs ya no expone JSON-LD; los datos están en el DOM renderizado.
+_EXTRACT_JS = r"""() => {
+  const cards = document.querySelectorAll('.ij-OfferList-offerCardItem, .sui-AtomCard');
+  const seen = new Set();
+  const out = [];
+  cards.forEach(card => {
+    const link = card.querySelector("a.ij-OfferCardContent-description-title-link, a[href*='/of-i']");
+    if (!link) return;
+    const url = link.href.split('?')[0];
+    if (seen.has(url)) return;
+    seen.add(url);
+    const titleEl = card.querySelector('.ij-OfferCardContent-description-title') || link;
+    const compEl = card.querySelector('.ij-OfferCardContent-description-subtitle');
+    const items = [...card.querySelectorAll('.ij-OfferCardContent-description-list-item')]
+      .map(e => (e.innerText || '').replace(/\s+/g, ' ').trim());
+    out.push({
+      url,
+      title: (titleEl.innerText || '').replace(/\s+/g, ' ').trim(),
+      company: compEl ? (compEl.innerText || '').replace(/\s+/g, ' ').trim() : '',
+      items,
+    });
+  });
+  return out;
+}"""
 
 
 class InfoJobsCollector(Collector):
+    """Scrapea el buscador de InfoJobs con un navegador real (Playwright).
+
+    InfoJobs está protegido por Distil/Imperva, que bloquea ``requests`` y los
+    navegadores *headless* (sirve una página captcha en ``/distil/captcha``).
+    Solo un navegador *headed* lo sortea; en servidores sin pantalla hay que
+    lanzarlo bajo ``xvfb-run`` (ver Dockerfile).
+    """
+
     name = "infojobs"
 
-    def __init__(self, search_slugs: list[str], sleep_between_calls: float = 2.0):
-        self.search_slugs = search_slugs
-        self.sleep_between_calls = sleep_between_calls
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": _UA,
-            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-            "Accept": "text/html,application/xhtml+xml",
-        })
+    def __init__(
+        self,
+        search_terms: list[str],
+        *,
+        headless: bool = False,
+        scrolls: int = 4,
+        nav_timeout_ms: int = 40000,
+    ):
+        self.search_terms = search_terms
+        self.headless = headless
+        self.scrolls = scrolls
+        self.nav_timeout_ms = nav_timeout_ms
 
     def collect(self) -> list[JobOffer]:
+        # Import diferido: Playwright es pesado y opcional.
+        from playwright.sync_api import sync_playwright
+
         offers: list[JobOffer] = []
-        for slug in self.search_slugs:
-            url = f"{_BASE}/{slug}"
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=self.headless,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            )
+            ctx = browser.new_context(locale="es-ES", user_agent=_UA)
+            page = ctx.new_page()
             try:
-                html = self._fetch(url)
+                for term in self.search_terms:
+                    offers.extend(self._collect_term(page, term))
             except _Blocked:
                 log.error(
-                    "infojobs blocked by anti-bot (Cloudflare?) for %s — see README "
-                    "for curl_cffi/Playwright fallback",
-                    url,
+                    "infojobs blocked by Distil/Imperva captcha — un navegador "
+                    "headless no basta; en servidor usa xvfb-run (ver README)."
                 )
-                return offers  # bail out: all slugs share the same defence
-            except Exception:
-                log.exception("infojobs: error fetching %s", url)
-                continue
-
-            parsed = _parse_listings(html)
-            log.info("infojobs slug=%s -> %d", slug, len(parsed))
-            offers.extend(parsed)
-            time.sleep(self.sleep_between_calls)
+            finally:
+                browser.close()
 
         seen: dict[str, JobOffer] = {}
         for o in offers:
             seen.setdefault(o.id, o)
         return list(seen.values())
 
-    def _fetch(self, url: str) -> str:
-        resp = self.session.get(url, timeout=20)
-        if resp.status_code in (403, 429, 503):
-            raise _Blocked(resp.status_code)
-        # Cloudflare interstitial usually returns 200 with a JS challenge page.
-        if "Just a moment" in resp.text or "challenge-platform" in resp.text:
-            raise _Blocked(resp.status_code)
-        resp.raise_for_status()
-        return resp.text
+    def _collect_term(self, page, term: str) -> list[JobOffer]:
+        url = _SEARCH.format(kw=quote_plus(term))
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=self.nav_timeout_ms)
+            page.wait_for_timeout(5000)
+        except Exception:
+            log.exception("infojobs: error fetching term=%r", term)
+            return []
+
+        if "distil/captcha" in page.content():
+            raise _Blocked()  # todos los términos comparten la misma defensa
+
+        try:
+            page.wait_for_selector(".ij-OfferList-offerCardItem, .sui-AtomCard", timeout=10000)
+        except Exception:
+            log.warning("infojobs: no cards for term=%r", term)
+            return []
+
+        for _ in range(self.scrolls):
+            page.mouse.wheel(0, 6000)
+            page.wait_for_timeout(500)
+
+        raw = page.evaluate(_EXTRACT_JS)
+        parsed = [o for o in (_record_to_offer(r) for r in raw) if o is not None]
+        log.info("infojobs term=%r -> %d", term, len(parsed))
+        return parsed
 
 
 class _Blocked(Exception):
-    def __init__(self, status: int = 0):
-        super().__init__(f"infojobs blocked status={status}")
-        self.status = status
+    def __init__(self) -> None:
+        super().__init__("infojobs blocked by Distil/Imperva captcha")
 
 
-def _parse_listings(html: str) -> list[JobOffer]:
-    soup = BeautifulSoup(html, "html.parser")
-    offers: list[JobOffer] = []
+def _record_to_offer(rec: dict) -> JobOffer | None:
+    url = (rec.get("url") or "").strip()
+    title = (rec.get("title") or "").strip()
+    if not url or not title:
+        return None
 
-    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
-        raw = script.string or script.get_text() or ""
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        for node in _iter_job_postings(data):
-            try:
-                offers.append(_node_to_offer(node))
-            except Exception:
-                log.exception("infojobs: skip bad JSON-LD node")
-    return offers
-
-
-def _iter_job_postings(data):
-    if isinstance(data, list):
-        for item in data:
-            yield from _iter_job_postings(item)
-        return
-    if not isinstance(data, dict):
-        return
-    if data.get("@type") == "JobPosting":
-        yield data
-        return
-    graph = data.get("@graph")
-    if isinstance(graph, list):
-        for item in graph:
-            yield from _iter_job_postings(item)
-
-
-def _node_to_offer(node: dict) -> JobOffer:
-    title = (node.get("title") or "").strip()
-    url = (node.get("url") or "").strip()
-    if not url:
-        identifier = node.get("identifier") or {}
-        if isinstance(identifier, dict):
-            url = (identifier.get("value") or "").strip()
-    if not url:
-        raise ValueError("infojobs: JobPosting node without url")
-
-    org = node.get("hiringOrganization") or {}
-    company = (org.get("name") if isinstance(org, dict) else "") or ""
-
-    location_str = _location_from_node(node)
-    description = re.sub(r"<[^>]+>", "", node.get("description") or "").strip()
-    is_remote = _infer_remote(node, title, description)
-    published_at = _parse_date(node.get("datePosted"))
+    items: list[str] = rec.get("items") or []
+    location = items[0] if items else None
+    modality = ""
+    for it in items:
+        m = _MODALITY_RE.search(it)
+        if m:
+            modality = m.group(1)
+            break
+    is_remote = bool(_REMOTE_RE.search(f"{modality} {title}"))
 
     return JobOffer.build(
         title=title,
-        company=company,
+        company=(rec.get("company") or "").strip(),
         source=Source.INFOJOBS,
         url=url,
-        location=location_str,
+        location=location,
         is_remote=is_remote,
-        description=description,
-        published_at=published_at,
+        description="",
+        published_at=None,
     )
-
-
-def _location_from_node(node: dict) -> str | None:
-    loc = node.get("jobLocation")
-    if isinstance(loc, list):
-        loc = loc[0] if loc else None
-    if not isinstance(loc, dict):
-        return None
-    addr = loc.get("address") or {}
-    if isinstance(addr, dict):
-        parts = [addr.get("addressLocality"), addr.get("addressRegion"), addr.get("addressCountry")]
-        parts = [p for p in parts if p]
-        if parts:
-            return ", ".join(str(p) for p in parts)
-    return None
-
-
-def _infer_remote(node: dict, title: str, description: str) -> bool | None:
-    if node.get("jobLocationType") == "TELECOMMUTE":
-        return True
-    if _REMOTE_RE.search(title) or _REMOTE_RE.search(description):
-        return True
-    return None
-
-
-def _parse_date(value) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None

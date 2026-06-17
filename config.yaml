@@ -29,14 +29,16 @@ jobspy:
 
 infojobs:
   enabled: true
-  # Slugs de búsqueda de InfoJobs. La URL final será:
-  #   https://www.infojobs.net/ofertas-trabajo/{slug}
-  search_slugs:
-    - "desarrollador-full-stack"
-    - "desarrollador-junior"
-    - "frontend-react"
-    - "backend-node"
-    - "ai-engineer"
+  # InfoJobs está tras Distil/Imperva: se scrapea con Playwright (navegador
+  # real). headless=false es obligatorio (Imperva bloquea headless); en
+  # servidor sin pantalla se lanza bajo xvfb-run (ver Dockerfile/README).
+  headless: false
+  search_terms:
+    - "full stack"
+    - "desarrollador junior"
+    - "frontend react"
+    - "backend node"
+    - "ai engineer"
 
 tecnoempleo:
   # Tecnoempleo retiró su RSS; ahora se scrapea el buscador HTML.

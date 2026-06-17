@@ -13,8 +13,8 @@ job_agent/
 ├── collectors/
 │   ├── base.py              # Collector ABC (collect_safe captura errores)
 │   ├── linkedin_indeed.py   # python-jobspy (LinkedIn + Indeed)
-│   ├── infojobs.py          # scraping HTML + JSON-LD
-│   └── tecnoempleo.py       # feedparser sobre RSS
+│   ├── infojobs.py          # Playwright headed (Distil/Imperva)
+│   └── tecnoempleo.py       # scraping HTML del buscador
 ├── filtering/
 │   ├── hard_filters.py      # reglas de descarte sin coste
 │   └── ai_scorer.py         # gpt-4o-mini (JSON mode) + tenacity
@@ -34,9 +34,10 @@ job_agent/
     `https://api.telegram.org/bot<TOKEN>/getUpdates`, busca `chat.id` en el JSON.
   - **Proxies (opcional)** — solo si quieres que LinkedIn funcione con fiabilidad desde la IP del servidor.
 
-> **Nota InfoJobs**: este collector hace **scraping** del HTML público
-> (no usa la API oficial, que requiere aprobación como partner). Si Cloudflare
-> bloquea las peticiones, ver sección [Contingencia InfoJobs](#contingencia-infojobs).
+> **Nota InfoJobs**: InfoJobs está protegido por **Distil/Imperva**, que
+> bloquea `requests` y los navegadores *headless*. El collector usa
+> **Playwright con Chromium en modo *headed*** (en servidor, bajo `xvfb`).
+> Es la fuente más frágil y lenta; ver [Notas InfoJobs](#notas-infojobs).
 
 ## Instalación
 
@@ -61,8 +62,8 @@ cp .env.example .env
 - `threshold`: nota mínima (0-100) para que una oferta entre en el mensaje. **Empieza en 60**, sube si te llega ruido.
 - `search_terms`: términos para LinkedIn/Indeed. Cada uno se ejecuta dos veces (España + remoto, y Sevilla on-site).
 - `jobspy.sites`: incluye `linkedin` solo si tienes proxies; si no, déjalo en `[indeed]` para reducir ruido en los logs.
-- `tecnoempleo.rss_urls`: pega las URLs RSS de tus búsquedas guardadas. El icono RSS aparece en la esquina superior derecha de cualquier resultado de búsqueda de Tecnoempleo.
-- `infojobs.search_slugs`: la última parte de `https://www.infojobs.net/ofertas-trabajo/<slug>`.
+- `tecnoempleo.search_terms`: términos de búsqueda libres; se consultan en `https://www.tecnoempleo.com/ofertas-trabajo/?te=<término>`.
+- `infojobs.search_terms`: términos de búsqueda libres (se consultan en el buscador de InfoJobs). `infojobs.headless` debe ser `false` (Imperva bloquea headless).
 - `hard_filters`: listas de keywords (case-insensitive) para descartar antes de llamar a la IA.
 
 ### Probar en local (sin Telegram)
@@ -71,8 +72,12 @@ cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate    # Windows: .venv/Scripts/activate
 pip install -r requirements.txt
+python -m playwright install chromium   # navegador para InfoJobs
 python -m job_agent --dry-run --log-level=DEBUG
 ```
+
+> En local, InfoJobs abrirá una ventana de Chromium (modo *headed*; es lo
+> esperado, headless está bloqueado por Imperva). En servidor se usa `xvfb`.
 
 `--dry-run` no envía a Telegram; imprime las ofertas por consola.
 
@@ -148,25 +153,31 @@ Y en `docker-compose.yml` cambiar a `restart: unless-stopped`.
 4. Si necesita configuración o credenciales, añádelas a `config.yaml` y
    `.env.example`.
 
-## Contingencia InfoJobs
+## Notas InfoJobs
 
-El collector usa `requests` + parseo de JSON-LD. Si en producción te
-encuentras este log:
+InfoJobs está protegido por **Distil/Imperva**. Comprobado empíricamente:
+
+| Método | ¿Sortea Distil? |
+|---|---|
+| `requests` / `curl_cffi` (huella TLS) | ❌ No (sirve `/distil/captcha`) |
+| Playwright **headless** | ❌ No (Imperva detecta headless) |
+| Playwright **headed** (navegador visible) | ✅ Sí |
+
+Por eso el collector usa **Playwright headed**. En un servidor sin pantalla
+(Docker/cron) se lanza bajo **`xvfb`** (ya configurado en el `Dockerfile` y el
+`ENTRYPOINT`). Las ofertas se extraen del **DOM renderizado** (InfoJobs ya no
+expone JSON-LD): tarjetas `.ij-OfferList-offerCardItem`.
+
+Si en producción aparece este log:
 
 ```
-ERROR infojobs blocked by anti-bot (Cloudflare?) for ...
+ERROR infojobs blocked by Distil/Imperva captcha ...
 ```
 
-Hay dos opciones, en orden de simplicidad:
-
-1. **`curl_cffi`**: reemplaza `requests` por `curl_cffi.requests` y pasa
-   `impersonate="chrome120"`. Suele sortear el JS challenge sin coste.
-2. **Playwright**: instala `playwright`, abre la URL en un Chromium headless
-   y devuelve `page.content()`. Más pesado pero también más robusto.
-
-Documento de referencia: el HTML de listado tiene varios `<script
-type="application/ld+json">` con `@type: "JobPosting"`. Una vez obtenido el
-HTML, el parseo del collector vale tal cual.
+significa que Imperva ha endurecido la defensa (p. ej. a un captcha
+interactivo). Es la fuente más frágil; si molesta, desactívala con
+`infojobs.enabled: false` en `config.yaml` — el resto de fuentes ya aportan
+volumen de sobra.
 
 ## Coste estimado
 
@@ -180,6 +191,6 @@ ejecución es de **céntimos**: ~5-15 ofertas pasan al scorer por ejecución
 |---|---|---|
 | Telegram falla con 400 | Markdown roto en un título | Mira el log, `_md_escape` debería capturar; reporta el caso. |
 | LinkedIn 0 ofertas, Indeed OK | LinkedIn bloquea la IP | Configura `PROXY_LIST` o quita `linkedin` de `jobspy.sites`. |
-| InfoJobs 0 ofertas | Cloudflare | Ver [Contingencia InfoJobs](#contingencia-infojobs). |
+| InfoJobs 0 ofertas | Distil/Imperva endureció el bloqueo | Ver [Notas InfoJobs](#notas-infojobs); o `infojobs.enabled: false`. |
 | `Missing required env var ...` | falta credencial en `.env` | Copia `.env.example` y rellena. |
 | Cron no dispara a las 08:00 reales | TZ del host distinta a Madrid | `timedatectl set-timezone Europe/Madrid`. |

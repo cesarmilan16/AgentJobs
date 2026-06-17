@@ -112,8 +112,11 @@ def _build_collectors(cfg: AppConfig) -> list[Collector]:
         collectors.append(TecnoempleoCollector(search_terms=tecno_terms))
 
     infojobs_cfg = cfg.raw.get("infojobs", {})
-    if infojobs_cfg.get("enabled") and infojobs_cfg.get("search_slugs"):
-        collectors.append(InfoJobsCollector(search_slugs=infojobs_cfg["search_slugs"]))
+    if infojobs_cfg.get("enabled") and infojobs_cfg.get("search_terms"):
+        collectors.append(InfoJobsCollector(
+            search_terms=infojobs_cfg["search_terms"],
+            headless=infojobs_cfg.get("headless", False),
+        ))
 
     jobspy_cfg = cfg.raw.get("jobspy", {})
     if jobspy_cfg and cfg.raw.get("search_terms"):
