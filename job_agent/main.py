@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from job_agent.collectors.base import Collector
 from job_agent.collectors.infojobs import InfoJobsCollector
 from job_agent.collectors.linkedin_indeed import JobSpyCollector
-from job_agent.collectors.tecnoempleo import TecnoempleoCollector
+from job_agent.collectors.tecnoempleo import TecnoempleoCollector, enrich_descriptions
 from job_agent.config import AppConfig, load_config
 from job_agent.filtering.ai_scorer import AIScorer
 from job_agent.filtering.hard_filters import HardFilterConfig, partition
@@ -73,6 +73,11 @@ def run(cfg: AppConfig, *, notifier: TelegramNotifier | None, dry_run: bool) -> 
 
     fresh = db.filter_new(all_offers)
     log.info("after_db_dedupe=%d", len(fresh))
+
+    # Tecnoempleo no trae descripción en el listado; se baja de la página de
+    # detalle solo para las ofertas nuevas, así los filtros y la IA ven el texto
+    # real (seniority, idioma, tipo de rol) y no juzgan solo por el título.
+    fresh = enrich_descriptions(fresh)
 
     hf_cfg = HardFilterConfig.from_dict(cfg.raw.get("hard_filters", {}))
     kept, discarded = partition(fresh, hf_cfg)

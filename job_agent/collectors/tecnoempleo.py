@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -147,3 +148,47 @@ def _parse_date(value: str) -> datetime | None:
         return datetime.strptime(value, "%d/%m/%Y").replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def enrich_descriptions(offers: list[JobOffer], *, sleep_between: float = 0.4) -> list[JobOffer]:
+    """Rellena la descripción de las ofertas de Tecnoempleo que llegan vacías.
+
+    El listado no trae descripción; está en la página de detalle (JSON-LD).
+    Llamar SOLO sobre ofertas nuevas (tras el dedupe de BD) para no descargar
+    cientos de páginas en cada ejecución.
+    """
+    session = requests.Session()
+    session.headers.update({"User-Agent": _UA, "Accept-Language": "es-ES,es;q=0.9"})
+
+    out: list[JobOffer] = []
+    enriched = 0
+    for o in offers:
+        if o.source is Source.TECNOEMPLEO and not o.description:
+            desc = _fetch_description(str(o.url), session)
+            if desc:
+                o = o.model_copy(update={"description": desc})
+                enriched += 1
+            time.sleep(sleep_between)
+        out.append(o)
+    if enriched:
+        log.info("tecnoempleo: descripciones enriquecidas=%d", enriched)
+    return out
+
+
+def _fetch_description(url: str, session: requests.Session) -> str:
+    try:
+        html = session.get(url, timeout=20).text
+    except Exception:
+        log.warning("tecnoempleo: no se pudo bajar detalle %s", url)
+        return ""
+    soup = BeautifulSoup(html, "html.parser")
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in (data if isinstance(data, list) else [data]):
+            if isinstance(item, dict) and item.get("@type") == "JobPosting":
+                raw = item.get("description", "") or ""
+                return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw)).strip()
+    return ""
