@@ -54,8 +54,16 @@ SYSTEM_PROMPT = (
     "rol debe ser programar y el nivel debe encajar con un junior/mid.\n"
     "\n"
     "Devuelve EXCLUSIVAMENTE un JSON con esta forma exacta:\n"
-    '{"score": <int 0-100>, "razon": "<una frase breve en español>", '
-    '"remoto": "si"|"no"|"desconocido"}\n'
+    '{"score": <int 0-100>, '
+    '"modalidad": "remoto"|"presencial"|"hibrido"|null, '
+    '"caveat": "<pega corta, máx 60 caracteres>"|null}\n'
+    "\n"
+    "- modalidad: modalidad de trabajo de la oferta; null si no se deduce.\n"
+    "- caveat: SOLO una pega real y accionable que el candidato deba saber "
+    "antes de postular (p.ej. 'Inglés C1 obligatorio', 'Híbrido en Madrid', "
+    "'Stack mayormente .NET'). Devuelve null si la oferta encaja sin pegas "
+    "relevantes; NO escribas justificaciones genéricas ('rol alineado') ni "
+    "resúmenes del puesto.\n"
     "\n"
     "El score expresa cómo de buena es la oferta PARA ESTE CANDIDATO, no la "
     "calidad absoluta de la empresa."
@@ -80,8 +88,8 @@ class AIScorer:
 
         return offer.model_copy(update={
             "score": int(data.get("score", 0)),
-            "score_reason": str(data.get("razon", ""))[:300],
-            "remote_per_ai": str(data.get("remoto", "desconocido")),
+            "score_reason": _clean_caveat(data.get("caveat")),
+            "remote_per_ai": _norm_modalidad(data.get("modalidad")),
         })
 
     def score_many(self, offers: Iterable[JobOffer]) -> list[JobOffer]:
@@ -115,3 +123,25 @@ class AIScorer:
         if "score" not in data:
             raise ValueError(f"unexpected ai response: {content[:200]}")
         return data
+
+
+_MODALIDADES = {"remoto", "presencial", "hibrido"}
+
+
+def _norm_modalidad(value: object) -> str:
+    """Normaliza la modalidad de la IA a un valor canónico para almacenar en
+    JobOffer.remote_per_ai. Desconocido cuando no se puede deducir."""
+    if not value:
+        return "desconocido"
+    m = str(value).strip().lower().replace("í", "i")
+    return m if m in _MODALIDADES else "desconocido"
+
+
+def _clean_caveat(value: object) -> str | None:
+    """La pega que viaja en JobOffer.score_reason. None si no hay aviso real."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() in ("null", "none", "n/a"):
+        return None
+    return s[:80]

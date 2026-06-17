@@ -48,8 +48,8 @@ class JobOffer(BaseModel):
     published_at: datetime | None = None
     captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     score: int | None = None
-    score_reason: str | None = None
-    remote_per_ai: str | None = None  # "si" | "no" | "desconocido"
+    score_reason: str | None = None  # caveat: pega corta o None si no hay aviso
+    remote_per_ai: str | None = None  # "remoto"|"presencial"|"hibrido"|"desconocido"
     discarded_reason: str | None = None
     sent: bool = False
 
