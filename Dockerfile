@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Europe/Madrid
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tzdata ca-certificates xvfb \
+ && apt-get install -y --no-install-recommends tzdata ca-certificates xvfb xauth \
  && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
  && rm -rf /var/lib/apt/lists/*
 
@@ -22,6 +22,8 @@ COPY config.yaml ./config.yaml
 # Persistent volume mounted at runtime: ./data (SQLite + logs)
 VOLUME ["/app/data"]
 
-# InfoJobs requiere Chromium "headed"; xvfb-run le da una pantalla virtual
-# para que funcione en un servidor sin display.
-ENTRYPOINT ["xvfb-run", "-a", "python", "-m", "job_agent"]
+# xvfb-run -a cuelga en Docker porque Xvfb no envía SIGUSR1 al padre en algunos
+# kernels. Arrancamos Xvfb directamente y esperamos a que el socket esté listo.
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+ENTRYPOINT ["/start.sh"]
