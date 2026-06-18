@@ -7,7 +7,7 @@ storage:
 
 # Score mínimo (0-100) que debe sacar una oferta para entrar en el mensaje
 # de Telegram. Las ofertas se siguen guardando en SQLite aunque no se envíen.
-threshold: 70
+threshold: 60
 
 # Términos de búsqueda comunes a LinkedIn / Indeed (JobSpy).
 # Cada término se ejecuta dos veces: en "Spain" con remoto y en "Sevilla, Spain"
