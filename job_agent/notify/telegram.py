@@ -87,6 +87,8 @@ def build_telegram_message(offers: list[JobOffer], *, when: datetime) -> list[st
         cur_len += len(group_header) + 2
         for o in group_offers:
             block = _format_offer_html(o)
+            if len(block) > _CHUNK_MAX:
+                block = block[:_CHUNK_MAX - 3] + "…"
             if cur_len + len(block) + 2 > _CHUNK_MAX:
                 flush()
                 # repetir la cabecera del grupo al continuar en otro mensaje

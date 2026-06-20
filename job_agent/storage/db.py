@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
+import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable
 
 from job_agent.models import JobOffer, Source
 
@@ -36,22 +36,16 @@ class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._conn() as conn:
-            conn.executescript(_SCHEMA)
-
-    @contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+        self._db = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._db.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
+        with self._lock:
+            self._db.executescript(_SCHEMA)
+            self._db.commit()
 
     def exists(self, offer_id: str) -> bool:
-        with self._conn() as conn:
-            cur = conn.execute("SELECT 1 FROM offers WHERE id = ? LIMIT 1", (offer_id,))
+        with self._lock:
+            cur = self._db.execute("SELECT 1 FROM offers WHERE id = ? LIMIT 1", (offer_id,))
             return cur.fetchone() is not None
 
     def filter_new(self, offers: Iterable[JobOffer]) -> list[JobOffer]:
@@ -59,9 +53,9 @@ class Database:
         if not offers:
             return []
         ids = [o.id for o in offers]
-        with self._conn() as conn:
-            placeholders = ",".join("?" for _ in ids)
-            cur = conn.execute(
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            cur = self._db.execute(
                 f"SELECT id FROM offers WHERE id IN ({placeholders})", ids
             )
             existing = {row["id"] for row in cur.fetchall()}
@@ -71,8 +65,8 @@ class Database:
         rows = [self._to_row(o) for o in offers]
         if not rows:
             return 0
-        with self._conn() as conn:
-            conn.executemany(
+        with self._lock:
+            self._db.executemany(
                 """
                 INSERT INTO offers (id, title, company, source, url, location,
                                     is_remote, description, published_at, captured_at,
@@ -91,21 +85,23 @@ class Database:
                 """,
                 rows,
             )
+            self._db.commit()
         return len(rows)
 
     def mark_sent(self, ids: Iterable[str]) -> None:
         ids = list(ids)
         if not ids:
             return
-        with self._conn() as conn:
-            placeholders = ",".join("?" for _ in ids)
-            conn.execute(
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            self._db.execute(
                 f"UPDATE offers SET sent = 1 WHERE id IN ({placeholders})", ids
             )
+            self._db.commit()
 
     def count(self) -> int:
-        with self._conn() as conn:
-            cur = conn.execute("SELECT COUNT(*) AS n FROM offers")
+        with self._lock:
+            cur = self._db.execute("SELECT COUNT(*) AS n FROM offers")
             return int(cur.fetchone()["n"])
 
     @staticmethod

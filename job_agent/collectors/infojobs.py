@@ -5,7 +5,7 @@ import re
 from urllib.parse import quote_plus
 
 from job_agent.collectors.base import Collector
-from job_agent.models import JobOffer, Source
+from job_agent.models import REMOTE_RE, JobOffer, Source
 
 log = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
-_REMOTE_RE = re.compile(r"\b(remoto|teletrabajo|100% remoto|remote|h[ií]brido)\b", re.IGNORECASE)
+
 _MODALITY_RE = re.compile(r"(solo teletrabajo|teletrabajo|h[ií]brido|presencial|remoto)", re.IGNORECASE)
 
 # Se ejecuta dentro de la página: devuelve las ofertas del listado.
@@ -91,10 +91,7 @@ class InfoJobsCollector(Collector):
             finally:
                 browser.close()
 
-        seen: dict[str, JobOffer] = {}
-        for o in offers:
-            seen.setdefault(o.id, o)
-        return list(seen.values())
+        return offers
 
     def _collect_term(self, page, term: str) -> list[JobOffer]:
         url = _SEARCH.format(kw=quote_plus(term))
@@ -143,7 +140,7 @@ def _record_to_offer(rec: dict) -> JobOffer | None:
         if m:
             modality = m.group(1)
             break
-    is_remote = bool(_REMOTE_RE.search(f"{modality} {title}"))
+    is_remote = bool(REMOTE_RE.search(f"{modality} {title}"))
 
     # InfoJobs no expone la descripción completa en el listado, pero las viñetas
     # de la tarjeta (ubicación, modalidad, experiencia, salario...) sí dan

@@ -15,6 +15,10 @@ class Collector(ABC):
         """Wrap collect() so a failing source never tumbles the run."""
         try:
             offers = self.collect()
+            seen: dict[str, JobOffer] = {}
+            for o in offers:
+                seen.setdefault(o.id, o)
+            offers = list(seen.values())
             log.info("collector=%s collected=%d", self.name, len(offers))
             return offers
         except Exception:

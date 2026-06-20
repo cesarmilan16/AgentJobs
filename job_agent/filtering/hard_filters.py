@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Iterable
 
 from job_agent.models import JobOffer
@@ -71,6 +73,11 @@ def partition(
 
 # --- helpers ---
 
+@lru_cache(maxsize=None)
+def _word_pattern(needle: str) -> re.Pattern:
+    return re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)")
+
+
 def _contains_word(haystack: str, needle: str) -> bool:
     """Word-ish containment: 'senior' should match 'Senior Developer' but not
     'senioritis'. For multi-word/punctuated needles (e.g. '.net', 'tech lead',
@@ -79,6 +86,4 @@ def _contains_word(haystack: str, needle: str) -> bool:
         return False
     if any(ch in needle for ch in (" ", "+", ".", "/", "-")):
         return needle in haystack
-    # Single alnum word: enforce word boundaries.
-    import re
-    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
+    return _word_pattern(needle).search(haystack) is not None
