@@ -11,7 +11,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from job_agent.collectors.base import Collector
-from job_agent.models import JobOffer, Source
+from job_agent.models import REMOTE_RE, JobOffer, Source
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ _UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
-_REMOTE_RE = re.compile(r"\b(remoto|teletrabajo|100% remoto|remote|h[ií]brido)\b", re.IGNORECASE)
+
 _RF_RE = re.compile(r"/rf-[0-9a-f]+")
 _RE_RE = re.compile(r"/re-\d+")
 # El span de meta es "<prefijo> - DD/MM/YYYY". El prefijo puede ser
@@ -64,11 +64,7 @@ class TecnoempleoCollector(Collector):
             offers.extend(parsed)
             time.sleep(self.sleep_between_calls)
 
-        # Dedupe within this run (la misma oferta aparece en varias búsquedas).
-        seen: dict[str, JobOffer] = {}
-        for o in offers:
-            seen.setdefault(o.id, o)
-        return list(seen.values())
+        return offers
 
 
 def _parse_listings(html: str) -> list[JobOffer]:
@@ -123,13 +119,13 @@ def _card_to_offer(title_a) -> JobOffer | None:
                     # "Madrid (Presencial)" -> location="Madrid", modality="Presencial"
                     modality = mod_match.group(1).strip()
                     location = prefix[: mod_match.start()].strip() or None
-                elif _REMOTE_RE.search(prefix):
+                elif REMOTE_RE.search(prefix):
                     # "100% remoto" -> sin ciudad, solo modalidad.
                     modality = prefix
                 else:
                     location = prefix or None
 
-    is_remote = bool(_REMOTE_RE.search(f"{modality} {title}"))
+    is_remote = bool(REMOTE_RE.search(f"{modality} {title}"))
 
     return JobOffer.build(
         title=title,
@@ -158,7 +154,11 @@ def enrich_descriptions(offers: list[JobOffer], *, sleep_between: float = 0.4) -
     cientos de páginas en cada ejecución.
     """
     session = requests.Session()
-    session.headers.update({"User-Agent": _UA, "Accept-Language": "es-ES,es;q=0.9"})
+    session.headers.update({
+        "User-Agent": _UA,
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml",
+    })
 
     out: list[JobOffer] = []
     enriched = 0

@@ -49,11 +49,7 @@ class JobSpyCollector(Collector):
                 all_offers.extend(offers)
                 time.sleep(self.sleep_between_calls)
 
-        # In-run dedupe (same job often appears in both passes / sites).
-        seen: dict[str, JobOffer] = {}
-        for o in all_offers:
-            seen.setdefault(o.id, o)
-        return list(seen.values())
+        return all_offers
 
     def _one_call(self, term: str, location: str, is_remote: bool) -> list[JobOffer]:
         try:
@@ -108,9 +104,14 @@ class JobSpyCollector(Collector):
             # be noisy. We accept linkedin/indeed only via config so this is unreachable normally.
             source = Source.INDEED
 
-        url = (
-            str(row.get("job_url") or row.get("job_url_direct") or "").strip()
-        )
+        job_url = row.get("job_url")
+        job_url_direct = row.get("job_url_direct")
+        if job_url and not pd.isna(job_url):
+            url = str(job_url).strip()
+        elif job_url_direct and not pd.isna(job_url_direct):
+            url = str(job_url_direct).strip()
+        else:
+            url = ""
         if not url:
             raise ValueError("missing url in jobspy row")
 

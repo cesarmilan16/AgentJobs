@@ -18,6 +18,8 @@ class Source(str, Enum):
 
 _TRACKING_PARAM_RE = re.compile(r"(^|&)(utm_[^=&]+|trk|trackingId|refId)=[^&]*")
 
+REMOTE_RE = re.compile(r"\b(remoto|teletrabajo|100% remoto|remote)\b", re.IGNORECASE)
+
 
 def normalize_url(url: str) -> str:
     """URL normalisation for deduplication: lowercase host, drop fragment,

@@ -82,28 +82,32 @@ def run(cfg: AppConfig, *, notifier: TelegramNotifier | None, dry_run: bool) -> 
     hf_cfg = HardFilterConfig.from_dict(cfg.raw.get("hard_filters", {}))
     kept, discarded = partition(fresh, hf_cfg)
     log.info("hard_filters kept=%d discarded=%d", len(kept), len(discarded))
-    db.upsert_many(discarded)
 
-    # AI scoring only for survivors.
+    # AI scoring only for survivors (never in dry-run: no charges, no side effects).
     scored: list[JobOffer] = []
     if kept:
-        if dry_run and not cfg.secrets.openai_api_key:
-            log.warning("dry-run without OPENAI_API_KEY: skipping AI scoring")
+        if dry_run:
+            log.info("dry-run: skipping AI scoring")
             scored = kept
         else:
             scorer = AIScorer(api_key=cfg.secrets.openai_api_key)
             scored = scorer.score_many(kept)
-    db.upsert_many(scored)
 
     threshold = cfg.threshold
+    if dry_run:
+        # Sin scoring de IA no hay puntuaciones reales; mostramos todo lo que
+        # pasó los filtros duros para que el usuario pueda revisar.
+        above = list(scored)
+        log.info("dry-run: showing all %d offers that passed hard filters", len(above))
+        _print_console(above, all_offers, kept, scored, threshold)
+        return
+
     above = [o for o in scored if (o.score or 0) >= threshold]
     above.sort(key=lambda o: o.score or 0, reverse=True)
     log.info("above_threshold=%d threshold=%d", len(above), threshold)
 
-    if dry_run:
-        _print_console(above, all_offers, kept, scored, threshold)
-        return
-
+    db.upsert_many(discarded)
+    db.upsert_many(scored)
     assert notifier is not None
     notifier.send_offers(above, when=now_madrid)
     db.mark_sent([o.id for o in above])
@@ -146,7 +150,8 @@ def _print_console(
     print(f"\n--- DRY RUN ---")
     print(f"collected={len(all_offers)} survived_hard={len(kept)} scored={len(scored)} above_threshold={len(above)} (>= {threshold})")
     for o in above:
-        print(f"[{o.score:>3}] {o.title}  ·  {o.company}  ·  {o.source.value}")
+        score_str = str(o.score) if o.score is not None else "N/A"
+        print(f"[{score_str:>3}] {o.title}  ·  {o.company}  ·  {o.source.value}")
         print(f"      {o.url}")
         print(f"      {o.score_reason}")
     print("--- /DRY RUN ---\n")

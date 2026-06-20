@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable
 
 from openai import OpenAI
@@ -93,7 +94,16 @@ class AIScorer:
         })
 
     def score_many(self, offers: Iterable[JobOffer]) -> list[JobOffer]:
-        return [self.score_offer(o) for o in offers]
+        indexed = list(enumerate(offers))
+        if not indexed:
+            return []
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {pool.submit(self.score_offer, o): i for i, o in indexed}
+            results: list[tuple[int, JobOffer]] = [
+                (futures[f], f.result()) for f in as_completed(futures)
+            ]
+        results.sort(key=lambda x: x[0])
+        return [o for _, o in results]
 
     @retry(
         stop=stop_after_attempt(3),
